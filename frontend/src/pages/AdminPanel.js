@@ -1,11 +1,28 @@
-// Admin Paneli ana sayfası
 import React, { useEffect, useState } from 'react';
-import axios from 'axios';
+import { useAuth } from '../context/AuthContext';
+import {
+  getAdminQuizzes,
+  getAdminUsers,
+  getAdminAnalytics,
+  updateAdminQuiz,
+  startAdminQuizLive,
+  endAdminQuizLive,
+  deleteAdminQuiz
+} from '../services/api';
+
+// MUI Icons
 import DashboardIcon from '@mui/icons-material/Dashboard';
 import PeopleIcon from '@mui/icons-material/People';
 import ListIcon from '@mui/icons-material/List';
 import BarChartIcon from '@mui/icons-material/BarChart';
 import FlagIcon from '@mui/icons-material/Flag';
+import InsightsIcon from '@mui/icons-material/Insights';
+import EditIcon from '@mui/icons-material/Edit';
+import DeleteIcon from '@mui/icons-material/Delete';
+import PlayArrowIcon from '@mui/icons-material/PlayArrow';
+import StopIcon from '@mui/icons-material/Stop';
+import ContentCopyIcon from '@mui/icons-material/ContentCopy';
+
 
 const sections = [
   { key: 'overview', label: 'Dashboard', icon: <DashboardIcon /> },
@@ -16,6 +33,7 @@ const sections = [
 ];
 
 function AdminPanel() {
+  const { user } = useAuth();
   const [tab, setTab] = useState('overview');
   const [quizzes, setQuizzes] = useState([]);
   const [users, setUsers] = useState([]);
@@ -24,94 +42,111 @@ function AdminPanel() {
   const [editQuiz, setEditQuiz] = useState(null);
   const [editTitle, setEditTitle] = useState('');
   const [editDescription, setEditDescription] = useState('');
-  const [editQuestions, setEditQuestions] = useState([]);
+  const [editQuestions, setEditQuestions] = useState([]); 
   const [liveRoomCodes, setLiveRoomCodes] = useState({});
-  const token = localStorage.getItem('token');
 
   useEffect(() => {
-    if (tab === 'quizzes') {
-      axios.get('/api/admin/quizzes', { headers: { Authorization: 'Bearer ' + token } })
-        .then(res => setQuizzes(res.data));
-    } else if (tab === 'users') {
-      axios.get('/api/admin/users', { headers: { Authorization: 'Bearer ' + token } })
-        .then(res => setUsers(res.data));
-    } else if (tab === 'analytics' || tab === 'overview') {
-      axios.get('/api/admin/analytics', { headers: { Authorization: 'Bearer ' + token } })
-        .then(res => setAnalytics(res.data));
+    if (!user || user.role !== 'admin') {
+      console.warn("AdminPanel: Kullanıcı admin rolünde değil, veya oturum yüklenmedi. API çağrıları yapılmıyor.");
+      return; 
     }
-  }, [tab, token]);
 
-  // Admin quiz düzenleme
+    const fetchData = async () => {
+      try {
+        if (tab === 'quizzes') {
+          const res = await getAdminQuizzes();
+          setQuizzes(res.data.map(q => ({
+              ...q,
+              id: q.id,
+              questions: JSON.parse(q.questions || '[]'), 
+              isActive: q.is_active || false,
+              roomCode: q.session_code || undefined
+          })));
+        } else if (tab === 'users') {
+          const res = await getAdminUsers();
+          setUsers(res.data.map(u => ({ 
+              ...u, 
+              id: u.id, 
+              created_at: u.created_at || undefined 
+          }))); 
+        } else if (tab === 'analytics' || tab === 'overview') {
+          const res = await getAdminAnalytics();
+          setAnalytics(res.data);
+        }
+      } catch (error) {
+        console.error(`Admin Panel: ${tab} verileri çekilirken hata:`, error.response?.data?.message || error.message);
+        alert(`Veri çekilirken hata oluştu: ${error.response?.data?.message || error.message}`);
+      }
+    };
+    fetchData();
+  }, [tab, user]);
+
   const handleAdminEdit = (quiz) => {
     setEditQuiz(quiz);
     setEditTitle(quiz.title);
     setEditDescription(quiz.description);
-    setEditQuestions(JSON.parse(JSON.stringify(quiz.questions)));
+    setEditQuestions(JSON.parse(JSON.stringify(quiz.questions || [])));
     setShowEdit(true);
   };
 
-  // Admin quiz güncelleme işlemi
   const handleAdminUpdate = async (e) => {
     e.preventDefault();
+    if (!editQuiz) return;
     try {
       const updated = {
         title: editTitle,
         description: editDescription,
-        questions: editQuestions
+        questions: JSON.stringify(editQuestions)
       };
-      const res = await axios.put(`/api/admin/quiz/${editQuiz._id}`, updated, {
-        headers: { Authorization: 'Bearer ' + localStorage.getItem('token') }
-      });
-      setQuizzes(quizzes.map(q => q._id === editQuiz._id ? res.data : q));
+      const res = await updateAdminQuiz(editQuiz.id, updated);
+      setQuizzes(quizzes.map(q => (q.id === editQuiz.id ? { ...res.data, questions: JSON.parse(res.data.questions || '[]') } : q))); 
       setShowEdit(false);
       setEditQuiz(null);
-    } catch {
-      alert('Quiz güncellenemedi.');
+      alert('Quiz başarıyla güncellendi!');
+    } catch (error) {
+      console.error('Admin Quiz güncellenemedi:', error.response?.data?.message || error.message);
+      alert('Quiz güncellenemedi: ' + (error.response?.data?.message || 'Bir hata oluştu.'));
     }
   };
 
-  // Admin quiz canlı başlatma
   const handleAdminStart = async (quizId) => {
     try {
-      const res = await axios.post(`/api/admin/quiz/${quizId}/start`, {}, {
-        headers: { Authorization: 'Bearer ' + localStorage.getItem('token') }
-      });
+      const res = await startAdminQuizLive(quizId);
       const roomCode = res.data.roomCode;
       setLiveRoomCodes(prev => ({ ...prev, [quizId]: roomCode }));
-      // Yönlendirme yok, sadece kodu göster
-      setQuizzes(quizzes => quizzes.map(q => q._id === quizId ? { ...q, isActive: true, roomCode } : q));
-    } catch {
-      alert('Quiz başlatılamadı.');
+      setQuizzes(quizzes => quizzes.map(q => q.id === quizId ? { ...q, isActive: true, roomCode } : q));
+      alert(`Quiz canlı yayına başladı! Oda Kodu: ${roomCode}`);
+    } catch (error) {
+      console.error('Admin Quiz başlatılamadı:', error.response?.data?.message || error.message);
+      alert('Quiz başlatılamadı: ' + (error.response?.data?.message || 'Bir hata oluştu.'));
     }
   };
 
-  // Admin quiz canlı oturumu sonlandırma
   const handleAdminEndLive = async (quizId) => {
     try {
-      await axios.post(`/api/admin/quiz/${quizId}/end`, {}, {
-        headers: { Authorization: 'Bearer ' + localStorage.getItem('token') }
-      });
+      await endAdminQuizLive(quizId);
       setLiveRoomCodes(prev => {
         const updated = { ...prev };
         delete updated[quizId];
         return updated;
       });
-      setQuizzes(quizzes => quizzes.map(q => q._id === quizId ? { ...q, isActive: false, roomCode: undefined } : q));
-    } catch {
-      alert('Oturum sonlandırılamadı.');
+      setQuizzes(quizzes => quizzes.map(q => q.id === quizId ? { ...q, isActive: false, roomCode: undefined } : q));
+      alert('Oturum başarıyla sonlandırıldı.');
+    } catch (error) {
+      console.error('Admin Oturumu sonlandırılamadı:', error.response?.data?.message || error.message);
+      alert('Oturum sonlandırılamadı: ' + (error.response?.data?.message || 'Bir hata oluştu.'));
     }
   };
 
-  // Admin quiz silme
   const handleAdminDelete = async (quizId) => {
     if (window.confirm('Bu quiz silinsin mi?')) {
       try {
-        await axios.delete(`/api/admin/quiz/${quizId}`, {
-          headers: { Authorization: 'Bearer ' + localStorage.getItem('token') }
-        });
-        setQuizzes(quizzes.filter(q => q._id !== quizId));
-      } catch {
-        alert('Quiz silinemedi.');
+        await deleteAdminQuiz(quizId);
+        setQuizzes(quizzes.filter(q => q.id !== quizId));
+        alert('Quiz başarıyla silindi!');
+      } catch (error) {
+        console.error('Admin Quiz silinemedi:', error.response?.data?.message || error.message);
+        alert('Quiz silinemedi: ' + (error.response?.data?.message || 'Bir hata oluştu.'));
       }
     }
   };
@@ -168,16 +203,16 @@ function AdminPanel() {
                   <div>İşlemler</div>
                 </div>
                 {users.map((u, i) => (
-                  <div key={u._id || i} style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr', gap: '1rem', padding: '1rem 0', borderBottom: '1px solid rgba(255,255,255,0.05)', color: 'white', alignItems: 'center' }}>
+                  <div key={u.id || i} style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr', gap: '1rem', padding: '1rem 0', borderBottom: '1px solid rgba(255,255,255,0.05)', color: 'white', alignItems: 'center' }}>
                     <div>
-                      <div style={{ fontWeight: 600 }}>{u.name || u.username}</div>
+                      <div style={{ fontWeight: 600 }}>{u.username || u.email}</div>
                       <div style={{ color: 'rgba(255,255,255,0.7)', fontSize: '0.9rem' }}>{u.email}</div>
                     </div>
-                    <div style={{ color: 'rgba(255,255,255,0.7)' }}>{new Date(u.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</div>
-                    <div>{u.createdQuizzes ? u.createdQuizzes.length : 0}</div>
+                    <div style={{ color: 'rgba(255,255,255,0.7)' }}>{u.created_at ? new Date(u.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'N/A'}</div>
+                    <div>{u.created_quizzes_count !== undefined ? u.created_quizzes_count : (u.createdQuizzes ? u.createdQuizzes.length : 0)}</div>
                     <div>
                       <button className="btn btn-secondary" style={{ fontSize: '0.8rem', padding: '0.3rem 0.8rem' }}>
-                        <i className="fas fa-edit"></i>
+                        <EditIcon style={{ fontSize: '0.8rem' }} />
                       </button>
                     </div>
                   </div>
@@ -191,37 +226,35 @@ function AdminPanel() {
               <h2 style={{ color: 'white', marginBottom: '2rem' }}>Tüm Quizler</h2>
               <div className="quiz-grid">
                 {quizzes.map(q => (
-                  <div className="quiz-card" key={q._id}>
+                  <div className="quiz-card" key={q.id}>
                     <div className="quiz-header">
                       <h3>{q.title}</h3>
-                      <span className={`quiz-status ${q.isActive ? 'status-live' : 'status-passive'}`}>{q.isActive ? 'LIVE' : 'PASSIVE'}</span>
+                      <span className={`quiz-status ${q.is_active ? 'status-live' : 'status-passive'}`}>{q.is_active ? 'LIVE' : 'PASSIVE'}</span>
                     </div>
                     <p>{q.description}</p>
                     <div style={{ marginTop: '1rem', fontSize: '0.9rem', opacity: 0.8 }}>
-                      <span style={{ marginRight: 16 }}><i className="fas fa-users"></i> {q.participants || 0} participants</span>
-                      <span><i className="fas fa-eye" style={{ marginLeft: 8 }}></i> {q.views || 0} views</span>
+                      <span style={{ marginRight: 16 }}><PeopleIcon style={{ fontSize: '0.9rem', marginRight: 4 }} /> {q.participants || 0} participants</span>
+                      <span><InsightsIcon style={{ fontSize: '0.9rem', marginLeft: 8, marginRight: 4 }} /> {q.views || 0} views</span>
                     </div>
                     <div style={{ marginTop: '1rem', display: 'flex', gap: '0.5rem' }}>
                       <button className="btn btn-secondary" style={{ fontSize: '0.8rem', padding: '0.5rem 1rem' }} onClick={() => handleAdminEdit(q)}>Edit</button>
-                      <button className="btn btn-primary" style={{ fontSize: '0.8rem', padding: '0.5rem 1rem' }} onClick={() => handleAdminDelete(q._id)}>Delete</button>
-                      {!q.isActive && (
-                        <button className="btn btn-primary" style={{ fontSize: '0.8rem', padding: '0.5rem 1rem' }} onClick={() => handleAdminStart(q._id)}>Start Live</button>
+                      <button className="btn btn-primary" style={{ fontSize: '0.8rem', padding: '0.5rem 1rem' }} onClick={() => handleAdminDelete(q.id)}>Delete</button>
+                      {!q.is_active && (
+                        <button className="btn btn-primary" style={{ fontSize: '0.8rem', padding: '0.5rem 1rem' }} onClick={() => handleAdminStart(q.id)}><PlayArrowIcon style={{ fontSize: '0.8rem', marginRight: 4 }} /> Start Live</button>
                       )}
-                      {q.isActive && (
-                        <button className="btn btn-danger" style={{ fontSize: '0.8rem', padding: '0.5rem 1rem' }} onClick={() => handleAdminEndLive(q._id)}>End Live</button>
+                      {q.is_active && (
+                        <button className="btn btn-danger" style={{ fontSize: '0.8rem', padding: '0.5rem 1rem' }} onClick={() => handleAdminEndLive(q.id)}><StopIcon style={{ fontSize: '0.8rem', marginRight: 4 }} /> End Live</button>
                       )}
                     </div>
-                    {/* Canlı oda kodu gösterimi */}
-                    {q.isActive && (q.roomCode || liveRoomCodes[q._id]) && (
-                      <div style={{ marginTop: 12, background: '#e3f2fd', borderRadius: 8, padding: 10, display: 'flex', alignItems: 'center', gap: 10 }}>
-                        <span style={{ fontWeight: 600, color: '#1976d2' }}>Oda Kodu: {q.roomCode || liveRoomCodes[q._id]}</span>
-                        <button className="btn btn-secondary" style={{ fontSize: '0.8rem', padding: '0.3rem 0.8rem' }} onClick={() => {navigator.clipboard.writeText(q.roomCode || liveRoomCodes[q._id]);}}>Kopyala</button>
+                    {q.is_active && (q.session_code || liveRoomCodes[q.id]) && (
+                      <div style={{ marginTop: 12, background: '#e3f2fd', borderRadius: 8, padding: 8, display: 'inline-flex', alignItems: 'center', gap: 10 }}>
+                        <span style={{ fontWeight: 600, color: '#1976d2' }}>Oda Kodu: {q.session_code || liveRoomCodes[q.id]}</span>
+                        <button className="btn btn-secondary" style={{ fontSize: '0.8rem', padding: '0.3rem 0.8rem' }} onClick={() => {navigator.clipboard.writeText(q.session_code || liveRoomCodes[q.id]);}}><ContentCopyIcon style={{ fontSize: '0.8rem', marginRight: 4 }} />Kopyala</button>
                       </div>
                     )}
                   </div>
                 ))}
               </div>
-              {/* Admin quiz düzenleme modalı */}
               {showEdit && (
                 <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', background: 'rgba(0,0,0,0.25)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   <div className="card" style={{ maxWidth: 500, width: '100%', position: 'relative', maxHeight: '90vh', overflowY: 'auto', borderRadius: 16, boxShadow: '0 4px 24px #0002', background: '#fff', padding: 24 }}>
@@ -238,24 +271,20 @@ function AdminPanel() {
                       </div>
                       <h4 style={{ color: '#3b3b5c', marginTop: 18 }}>Sorular</h4>
                       {editQuestions.map((q, idx) => (
-                        <div key={idx} style={{ marginBottom: 16, background: '#f7f8fa', borderRadius: 8, padding: 12 }}>
+                        <div key={q.tempId || idx} style={{ marginBottom: 16, background: '#f7f8fa', borderRadius: 8, padding: 12 }}>
                           <b>Soru {idx + 1}:</b><br />
-                          <input value={q.text} onChange={e => {
-                            const updated = [...editQuestions];
-                            updated[idx].text = e.target.value;
-                            setEditQuestions(updated);
-                          }} placeholder="Soru metni" required style={{ width: '100%', borderRadius: 8, border: '1px solid #ddd', padding: 8, marginBottom: 8 }} />
+                          <input value={q.question_text || ''} onChange={e => handleEditQuestionTextChange(idx, e.target.value)} placeholder="Soru metni" required style={{ width: '100%', borderRadius: 8, border: '1px solid #ddd', padding: 8, marginBottom: 8 }} />
                           <div style={{ marginTop: 6 }}>
                             {q.options.map((opt, i) => (
-                              <span key={i} style={{ display: 'inline-block', marginRight: 8 }}>
-                                <input value={opt} onChange={e => {
+                              <span key={opt.tempId || i} style={{ display: 'inline-block', marginRight: 8 }}>
+                                <input value={opt.option_text || ''} onChange={e => {
                                   const updated = [...editQuestions];
-                                  updated[idx].options[i] = e.target.value;
+                                  updated[idx].options[i].option_text = e.target.value;
                                   setEditQuestions(updated);
                                 }} placeholder={`Seçenek ${i + 1}`} required style={{ width: 120, borderRadius: 8, border: '1px solid #ddd', padding: 6 }} />
-                                <input type="radio" name={`edit-correct-${idx}`} checked={q.correctIndex === i} onChange={() => {
+                                <input type="radio" name={`edit-correct-${idx}`} checked={q.correct_answer_option_id === opt.id} onChange={() => {
                                   const updated = [...editQuestions];
-                                  updated[idx].correctIndex = i;
+                                  updated[idx].correct_answer_option_id = opt.id;
                                   setEditQuestions(updated);
                                 }} />
                                 <span style={{ fontSize: 13, color: '#888' }}>Doğru</span>
@@ -280,7 +309,7 @@ function AdminPanel() {
               <div>En Çok Oynanan Quizler:</div>
               <ul>
                 {(analytics.mostPlayed || []).map((q, i) => (
-                  <li key={i}>{q._id} ({q.count} kez)</li>
+                  <li key={i}>{q.quiz_title || 'Bilinmiyor'} ({q.play_count} kez)</li>
                 ))}
               </ul>
             </div>
