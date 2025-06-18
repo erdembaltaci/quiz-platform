@@ -7,7 +7,7 @@ import axios from 'axios';
 // LÜTFEN [CANLI_BACKEND_URL_BURAYA] KISMINI KENDİ CANLI BACKEND URL'İNİZLE DEĞİŞTİRİN (Render'dan alacaksınız)
 const API_URL = process.env.NODE_ENV === 'production' 
                 ? 'https://[CANLI_BACKEND_URL_BURAYA]/api' 
-                : 'http://localhost:5000/api'; // Lokal geliştirme için tam URL veya proxy'ye bırakmak isterseniz sadece '/api'
+                : 'http://localhost:5000/api'; 
 
 
 // Axios instance'ı oluştur (tüm API istekleri bu instance üzerinden geçecek)
