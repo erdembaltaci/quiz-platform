@@ -10,13 +10,13 @@ module.exports = override(
     },
   ]),
   (config) => {
+    // MUI v5 ve diğer modern JS syntax hatalarını çözmek için
     const babelLoader = config.module.rules.find((rule) => {
       return rule.oneOf && rule.oneOf.some((loader) => loader.loader && loader.loader.includes('babel-loader'));
     }).oneOf.find((loader) => loader.loader && loader.loader.includes('babel-loader'));
 
     if (babelLoader) {
       babelLoader.include = undefined;
-      // Bu kısım MUI hataları için önemliydi, arkadaşınızın projesi MUI kullanıyorsa gerekli
       babelLoader.exclude = /node_modules(?!\/(swiper|dom7|@mui\/system|@mui\/material|@emotion\/react|@emotion\/styled)\/)/;
     }
 
@@ -28,6 +28,7 @@ module.exports = override(
       }),
     ]);
     
+    // 'process' modülünü tarayıcı uyumlu polyfill'e yönlendir.
     config.resolve.alias = {
         ...(config.resolve.alias || {}),
         'process': require.resolve('process/browser')
