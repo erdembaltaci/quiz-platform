@@ -14,7 +14,7 @@ import {
   updateAdminQuiz
 } from '../services/api';
 
-// MUI Icons - Tüm kullanılan iconların burada olduğundan emin olun
+// MUI Icons
 import QuizIcon from '@mui/icons-material/Quiz';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
@@ -22,8 +22,7 @@ import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import StopIcon from '@mui/icons-material/Stop';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 
-// Geçici ID sayaçları (düzenleme modalı içindeki sorular için)
-// Bunlar fonksiyonun dışında tanımlanabilir veya addEditQuestion içinde Date.now()+Math.random() kullanılabilir
+// Geçici ID sayaçları
 let nextEditOptionTempId = 1; 
 let nextEditQuestionTempId = 1;
 
@@ -33,39 +32,35 @@ function QuizList() {
   const [editQuiz, setEditQuiz] = useState(null);
   const [editTitle, setEditTitle] = useState('');
   const [editDescription, setEditDescription] = useState('');
-  // BU SATIRIN KESİNLİKLE VE DOĞRU BİR ŞEKİLDE BURADA OLDUĞUNDAN EMİN OLUN!
-  const [editQuestions, setEditQuestions] = useState([]); // 'no-undef' hatası buradan geliyordu
+  const [editQuestions, setEditQuestions] = useState([]);
   const [showEdit, setShowEdit] = useState(false);
   const [liveRoomCodes, setLiveRoomCodes] = useState({});
-  
+
   const navigate = useNavigate();
 
   const isTeacherOrAdmin = user && (user.role === 'teacher' || user.role === 'admin');
   const isAdmin = user?.role === 'admin';
 
-  // handleEditQuestionTextChange fonksiyonu (useCallback ile optimize edildi)
   const handleEditQuestionTextChange = useCallback((qIndex, value) => {
     setEditQuestions(prev => {
       const updated = [...prev];
-      if (updated[qIndex]) { // Dizideki elemanın varlığını kontrol et
+      if (updated[qIndex]) { 
         updated[qIndex].question_text = value;
       }
       return updated;
     });
-  }, []); // Bağımlılık dizisi boş bırakıldı çünkü içeride dışarıdan bir state/prop kullanılmıyor.
+  }, []);
 
-  // handleEditOptionTextChange fonksiyonu (useCallback ile optimize edildi)
   const handleEditOptionTextChange = useCallback((qIndex, optIndex, value) => {
     setEditQuestions(prev => {
       const updated = [...prev];
-      if (updated[qIndex] && updated[qIndex].options && updated[qIndex].options[optIndex]) {
+      if (updated[qIndex] && updated[qIndex].options && updated[qIndex].options[optIndex]) { 
         updated[qIndex].options[optIndex].option_text = value;
       }
       return updated;
     });
-  }, []); // Bağımlılık dizisi boş bırakıldı.
+  }, []);
 
-  // handleEditCorrectChange fonksiyonu (useCallback ile optimize edildi)
   const handleEditCorrectChange = useCallback((qIndex, optionTempId) => {
     setEditQuestions(prev => {
       const updated = [...prev];
@@ -74,9 +69,8 @@ function QuizList() {
       }
       return updated;
     });
-  }, []); // Bağımlılık dizisi boş bırakıldı.
+  }, []);
 
-  // Yeni soru ekle (düzenleme modalı içinde) (useCallback ile optimize edildi)
   const addEditQuestion = useCallback(() => {
     setEditQuestions(prev => {
       const newOptions = [
@@ -93,25 +87,24 @@ function QuizList() {
         correct_answer_option_temp_id: null 
       }];
     });
-  }, []); // Bağımlılık dizisi boş bırakıldı.
+  }, []);
 
-  // Soru sil (düzenleme modalı içinde) (useCallback ile optimize edildi)
   const removeEditQuestion = useCallback((index) => {
     setEditQuestions(prev => prev.filter((_, i) => i !== index));
-  }, []); // Bağımlılık dizisi boş bırakıldı.
+  }, []);
 
 
   useEffect(() => {
     const fetchQuizzes = async () => {
       try {
         const quizRes = await apiGetQuizzes(); 
-        
-        setQuizzes(quizRes.data.map(q => ({ 
-            ...q, 
-            id: q.id,
-            is_active: q.is_active,
-            session_code: q.session_code,
-            questions: JSON.parse(q.questions || '[]')
+
+        setQuizzes(quizRes.data.map(quizItem => ({ // map değişkeni `quizItem` olarak değiştirildi, içerdeki `q` ile çakışmayı önlemek için
+            ...quizItem, 
+            id: quizItem.id,
+            is_active: quizItem.is_active,
+            session_code: quizItem.session_code,
+            questions: JSON.parse(quizItem.questions || '[]')
         })));
 
       } catch (error) {
@@ -120,14 +113,14 @@ function QuizList() {
       }
     };
     fetchQuizzes();
-  }, [user]); // user değiştiğinde (giriş/çıkış) quizleri tekrar çek.
+  }, [user]);
 
 
   const handleDelete = async (id) => {
     if (window.confirm('Bu quiz silinsin mi?')) {
       try {
         await apiDeleteQuiz(id);
-        setQuizzes(quizzes.filter(q => q.id !== id));
+        setQuizzes(quizzes.filter(quizItem => quizItem.id !== id)); // quizItem kullanıldı
         alert('Quiz başarıyla silindi!');
       } catch (error) {
         console.error('Quiz silme hatası:', error.response?.data?.message || error.message);
@@ -136,34 +129,33 @@ function QuizList() {
     }
   };
 
-  const handleEdit = useCallback((quiz) => { // useCallback eklendi
+  const handleEdit = useCallback((quiz) => { 
     setEditQuiz(quiz);
     setEditTitle(quiz.title);
     setEditDescription(quiz.description);
-    // nextEditOptionTempId ve nextEditQuestionTempId artık doğrudan kullanılmıyor
-    const questionsWithTempIds = (quiz.questions || []).map(q => ({
-      ...q,
+    const questionsWithTempIds = (quiz.questions || []).map(qItem => ({ // qItem kullanıldı
+      ...qItem,
       tempId: nextEditQuestionTempId++,
-      options: (q.options || []).map(opt => ({
-        ...opt,
+      options: (qItem.options || []).map(optItem => ({ // optItem kullanıldı
+        ...optItem,
         tempId: nextEditOptionTempId++
       })),
-      correct_answer_option_temp_id: q.correct_answer_option_id
+      correct_answer_option_temp_id: qItem.correct_answer_option_id
     }));
     setEditQuestions(JSON.parse(JSON.stringify(questionsWithTempIds)));
     setShowEdit(true);
-  }, []); // Bağımlılıkları kontrol edin (quiz parametresi dışarıdan geliyor)
+  }, []);
 
   const handleUpdate = async (e) => {
     e.preventDefault();
     if (!editQuiz) return;
-    
+
     if (!editTitle.trim() || !editDescription.trim()) {
       alert('Başlık ve açıklama boş bırakılamaz.');
       return;
     }
-    for (const q of editQuestions) {
-      if (!q.question_text.trim() || q.options.some(opt => !opt.option_text.trim()) || !q.correct_answer_option_temp_id) {
+    for (const qItem of editQuestions) { // qItem kullanıldı
+      if (!qItem.question_text.trim() || qItem.options.some(optItem => !optItem.option_text.trim()) || !qItem.correct_answer_option_temp_id) { // optItem kullanıldı
         alert('Tüm soruların metinleri, seçenekleri ve doğru cevapları doldurulmalıdır.');
         return;
       }
@@ -173,20 +165,20 @@ function QuizList() {
       const updatedQuizData = {
         title: editTitle,
         description: editDescription,
-        questions: JSON.stringify(editQuestions.map(q => ({
-          question_text: q.question_text,
-          question_type: q.question_type,
-          correct_answer_option_text: q.options.find(opt => opt.tempId === q.correct_answer_option_temp_id)?.option_text || null,
-          options: q.options.map(opt => ({
-            option_letter: opt.option_letter,
-            option_text: opt.option_text
+        questions: JSON.stringify(editQuestions.map(qItem => ({ // qItem kullanıldı
+          question_text: qItem.question_text,
+          question_type: qItem.question_type,
+          correct_answer_option_text: qItem.options.find(optItem => optItem.tempId === qItem.correct_answer_option_temp_id)?.option_text || null, // optItem kullanıldı
+          options: qItem.options.map(optItem => ({ // optItem kullanıldı
+            option_letter: optItem.option_letter,
+            option_text: optItem.option_text
           }))
         })))
       };
 
       const res = await apiUpdateQuiz(editQuiz.id, updatedQuizData);
-      
-      setQuizzes(quizzes.map(q => (q.id === editQuiz.id ? { ...res.data, questions: JSON.parse(res.data.questions || '[]') } : q)));
+
+      setQuizzes(quizzes.map(quizItem => (quizItem.id === editQuiz.id ? { ...res.data, questions: JSON.parse(res.data.questions || '[]') } : quizItem))); // quizItem kullanıldı
       setShowEdit(false);
       setEditQuiz(null);
       alert('Quiz başarıyla güncellendi!');
@@ -213,7 +205,7 @@ function QuizList() {
       const res = await startAdminQuizLive(quizId);
       const roomCode = res.data.roomCode;
       setLiveRoomCodes(prev => ({ ...prev, [quizId]: roomCode }));
-      setQuizzes(quizzes => quizzes.map(q => q.id === quizId ? { ...q, is_active: true, session_code: roomCode } : q));
+      setQuizzes(quizzes => quizzes.map(quizItem => quizItem.id === quizId ? { ...quizItem, is_active: true, session_code: roomCode } : quizItem)); // quizItem kullanıldı
       alert(`Admin: Quiz canlı yayına başladı! Oda Kodu: ${roomCode}`);
     } catch (error) {
       console.error('Admin Quiz başlatılamadı:', error.response?.data?.message || error.message);
@@ -229,7 +221,7 @@ function QuizList() {
         delete updated[quizId];
         return updated;
       });
-      setQuizzes(quizzes => quizzes.map(q => q.id === quizId ? { ...q, is_active: false, session_code: undefined } : q));
+      setQuizzes(quizzes => quizzes.map(quizItem => quizItem.id === quizId ? { ...quizItem, is_active: false, session_code: undefined } : quizItem)); // quizItem kullanıldı
       alert('Admin: Oturum başarıyla sonlandırıldı.');
     } catch (error) {
       console.error('Admin Oturumu sonlandırılamadı:', error.response?.data?.message || error.message);
@@ -248,40 +240,40 @@ function QuizList() {
         <h2 style={{ display: 'flex', alignItems: 'center', color: '#3b3b5c', fontWeight: 700, fontSize: 28, marginBottom: 24 }}>
           <QuizIcon style={{ marginRight: 10, color: '#6a11cb' }} /> Quizler
         </h2>
-        
+
         {quizzes.length === 0 && <p style={{ textAlign: 'center', color: '#666' }}>Henüz gösterilecek bir quiz yok. Yeni bir quiz oluşturmak için "Quiz Oluştur" bağlantısını kullanın.</p>}
-        {quizzes.map(quiz => (
-          <div className="quiz-card" key={quiz.id} style={{ background: '#f7f8fa', borderRadius: 12, boxShadow: '0 2px 8px #0001', padding: 20, marginBottom: 18 }}>
-            <h3 style={{ marginBottom: 8, color: '#2575fc' }}>{quiz.title}</h3>
-            <div style={{ color: '#888', marginBottom: 8 }}>{quiz.description}</div>
-            <div style={{ fontSize: 14, color: '#aaa', marginBottom: 8 }}>Oluşturan: {quiz.created_by_username || quiz.created_by_email || 'Bilinmiyor'}</div>
-            
-            <button onClick={() => navigate(`/play-quiz/${quiz.id}`)} style={{ background: '#2575fc', color: '#fff', border: 'none', borderRadius: 8, padding: '8px 18px', fontWeight: 600, cursor: 'pointer', marginRight: 8 }}>
+        {quizzes.map(quizItem => ( // map değişkeni quizItem olarak düzeltildi
+          <div className="quiz-card" key={quizItem.id} style={{ background: '#f7f8fa', borderRadius: 12, boxShadow: '0 2px 8px #0001', padding: 20, marginBottom: 18 }}>
+            <h3 style={{ marginBottom: 8, color: '#2575fc' }}>{quizItem.title}</h3>
+            <div style={{ color: '#888', marginBottom: 8 }}>{quizItem.description}</div>
+            <div style={{ fontSize: 14, color: '#aaa', marginBottom: 8 }}>Oluşturan: {quizItem.created_by_username || quizItem.created_by_email || 'Bilinmiyor'}</div>
+
+            <button onClick={() => navigate(`/play-quiz/${quizItem.id}`)} style={{ background: '#2575fc', color: '#fff', border: 'none', borderRadius: 8, padding: '8px 18px', fontWeight: 600, cursor: 'pointer', marginRight: 8 }}>
               Quiz Oyna
             </button>
-            
-            {isTeacherOrAdmin && quiz.host_user_id === user?.id && (
+
+            {isTeacherOrAdmin && quizItem.host_user_id === user?.id && (
               <>
-                <button style={{ background: '#6a11cb', color: '#fff', border: 'none', borderRadius: 8, padding: '8px 14px', fontWeight: 600, marginLeft: 8, cursor: 'pointer' }} onClick={() => handleEdit(quiz)}>Düzenle</button>
-                <button style={{ background: '#ff6b6b', color: '#fff', border: 'none', borderRadius: 8, padding: '8px 14px', fontWeight: 600, marginLeft: 8, cursor: 'pointer' }} onClick={() => handleDelete(quiz.id)}>Sil</button>
-                {!quiz.is_active && (
-                  <button style={{ background: '#1abc9c', color: '#fff', border: 'none', borderRadius: 8, padding: '8px 14px', fontWeight: 600, marginLeft: 8, cursor: 'pointer' }} onClick={() => handleStart(quiz.id)}>Başlat (Canlı)</button>
+                <button style={{ background: '#6a11cb', color: '#fff', border: 'none', borderRadius: 8, padding: '8px 14px', fontWeight: 600, marginLeft: 8, cursor: 'pointer' }} onClick={() => handleEdit(quizItem)}>Düzenle</button>
+                <button style={{ background: '#ff6b6b', color: '#fff', border: 'none', borderRadius: 8, padding: '8px 14px', fontWeight: 600, marginLeft: 8, cursor: 'pointer' }} onClick={() => handleDelete(quizItem.id)}>Sil</button>
+                {!quizItem.is_active && (
+                  <button style={{ background: '#1abc9c', color: '#fff', border: 'none', borderRadius: 8, padding: '8px 14px', fontWeight: 600, marginLeft: 8, cursor: 'pointer' }} onClick={() => handleStart(quizItem.id)}>Başlat (Canlı)</button>
                 )}
               </>
             )}
 
             {isAdmin && (
               <div style={{ marginTop: 10 }}>
-                {!quiz.is_active && (
-                  <button className="btn btn-primary" style={{ fontSize: '0.8rem', padding: '0.5rem 1rem', marginRight: 8 }} onClick={() => handleAdminStartLive(quiz.id)}>Start Live (Admin)</button>
+                {!quizItem.is_active && (
+                  <button className="btn btn-primary" style={{ fontSize: '0.8rem', padding: '0.5rem 1rem', marginRight: 8 }} onClick={() => handleAdminStartLive(quizItem.id)}>Start Live (Admin)</button>
                 )}
-                {quiz.is_active && (
-                  <button className="btn btn-danger" style={{ fontSize: '0.8rem', padding: '0.5rem 1rem', marginRight: 8 }} onClick={() => handleAdminEndLiveQuiz(quiz.id)}>End Live (Admin)</button>
+                {quizItem.is_active && (
+                  <button className="btn btn-danger" style={{ fontSize: '0.8rem', padding: '0.5rem 1rem', marginRight: 8 }} onClick={() => handleAdminEndLiveQuiz(quizItem.id)}>End Live (Admin)</button>
                 )}
-                {q.is_active && (quiz.session_code || liveRoomCodes[quiz.id]) && (
+                {quizItem.is_active && (quizItem.session_code || liveRoomCodes[quizItem.id]) && ( // quizItem kullanıldı
                   <div style={{ marginTop: 8, background: '#e3f2fd', borderRadius: 8, padding: 8, display: 'inline-flex', alignItems: 'center', gap: 10 }}>
-                    <span style={{ fontWeight: 600, color: '#1976d2' }}>Oda Kodu: {quiz.session_code || liveRoomCodes[quiz.id]}</span>
-                    <button className="btn btn-secondary" style={{ fontSize: '0.8rem', padding: '0.3rem 0.8rem' }} onClick={() => {navigator.clipboard.writeText(quiz.session_code || liveRoomCodes[quiz.id]);}}><ContentCopyIcon style={{ fontSize: '0.8rem', marginRight: 4 }} />Kopyala</button>
+                    <span style={{ fontWeight: 600, color: '#1976d2' }}>Oda Kodu: {quizItem.session_code || liveRoomCodes[quizItem.id]}</span>
+                    <button className="btn btn-secondary" style={{ fontSize: '0.8rem', padding: '0.3rem 0.8rem' }} onClick={() => {navigator.clipboard.writeText(quizItem.session_code || liveRoomCodes[quizItem.id]);}}><ContentCopyIcon style={{ fontSize: '0.8rem', marginRight: 4 }} />Kopyala</button>
                   </div>
                 )}
               </div>
@@ -304,19 +296,19 @@ function QuizList() {
                   <input value={editDescription} onChange={e => setEditDescription(e.target.value)} required style={{ width: '100%', borderRadius: 8, border: '1px solid #ddd', padding: 8, marginBottom: 10 }} />
                 </div>
                 <h4 style={{ color: '#3b3b5c', marginTop: 18 }}>Sorular</h4>
-                {editQuestions.map((q, idx) => (
-                  <div key={q.tempId || idx} style={{ marginBottom: 16, background: '#f7f8fa', borderRadius: 8, padding: 12 }}>
+                {editQuestions.map((qItem, idx) => ( // qItem kullanıldı
+                  <div key={qItem.tempId || idx} style={{ marginBottom: 16, background: '#f7f8fa', borderRadius: 8, padding: 12 }}>
                     <b>Soru {idx + 1}:</b><br />
-                    <input value={q.question_text || ''} onChange={e => handleEditQuestionTextChange(idx, e.target.value)} placeholder="Soru metni" required style={{ width: '100%', borderRadius: 8, border: '1px solid #ddd', padding: 8, marginBottom: 8 }} />
+                    <input value={qItem.question_text || ''} onChange={e => handleEditQuestionTextChange(idx, e.target.value)} placeholder="Soru metni" required style={{ width: '100%', borderRadius: 8, border: '1px solid #ddd', padding: 8, marginBottom: 8 }} />
                     <div style={{ marginTop: 6 }}>
-                      {q.options.map((opt, i) => (
-                        <span key={opt.tempId || i} style={{ display: 'inline-block', marginRight: 8 }}>
-                          <input value={opt.option_text || ''} onChange={e => handleEditOptionTextChange(idx, i, e.target.value)} placeholder={`Seçenek ${opt.option_letter}`} required style={{ width: 120, borderRadius: 8, border: '1px solid #ddd', padding: 6 }} />
-                          <input type="radio" name={`edit-correct-${idx}`} checked={q.correct_answer_option_id === opt.id} onChange={() => handleEditCorrectChange(idx, opt.id)} />
+                      {qItem.options.map((optItem, i) => ( // optItem kullanıldı
+                        <span key={optItem.tempId || i} style={{ display: 'inline-block', marginRight: 8 }}>
+                          <input value={optItem.option_text || ''} onChange={e => handleEditOptionTextChange(idx, i, e.target.value)} placeholder={`Seçenek ${optItem.option_letter}`} required style={{ width: 120, borderRadius: 8, border: '1px solid #ddd', padding: 6 }} />
+                          <input type="radio" name={`edit-correct-${idx}`} checked={qItem.correct_answer_option_id === optItem.id} onChange={() => handleEditCorrectChange(idx, optItem.id)} />
                           <span style={{ fontSize: 13, color: '#888' }}>Doğru</span>
                         </span>
                       ))}
-                      {q.options.length < 4 && (
+                      {qItem.options.length < 4 && (
                         <button type="button" onClick={() => {
                           const updated = [...editQuestions];
                           updated[idx].options.push({ tempId: Date.now() + Math.random(), option_letter: String.fromCharCode(65 + updated[idx].options.length), option_text: '' });
@@ -340,8 +332,6 @@ function QuizList() {
           </div>
         )}
       </div>
-    </div>
-  );
-}
-
-export default QuizList;
+    ))}
+  </div>
+</div>
