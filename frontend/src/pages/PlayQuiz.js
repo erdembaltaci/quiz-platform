@@ -1,143 +1,197 @@
-// Tek başına quiz çözme (canlı olmayan mod) için sayfa
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react'; // useRef ve useCallback eklendi
 import { useParams, useNavigate } from 'react-router-dom';
-import { getQuizById } from '../services/api';
-import QuestionTimer from './QuestionTimer';
-import { saveQuizHistory } from '../services/api';
-
-// Arka plan müziği için basit bir mp3 dosyası (public klasörüne eklenmeli)
-const MUSIC_URL = process.env.PUBLIC_URL + '/quiz-music.mp3';
+import { getQuizById, saveQuizHistory } from '../services/api';
+import QuestionComponent from '../components/QuestionComponent';
+import Leaderboard from '../components/Leaderboard';
+import { useAuth } from '../context/AuthContext';
 
 function PlayQuiz() {
-  // URL'den quiz id'sini al
-  const { id } = useParams();
+  const { id: quizId } = useParams();
   const navigate = useNavigate();
-  // Quiz objesi, mevcut soru, cevap ve zamanlayıcı için state'ler
+  const { user, token } = useAuth();
+  
   const [quiz, setQuiz] = useState(null);
-  const [currentQ, setCurrentQ] = useState(0); // Şu anki soru indeksi
-  const [answer, setAnswer] = useState(''); // Kullanıcının cevabı
-  const [showTimer, setShowTimer] = useState(true); // Zamanlayıcı gösterilsin mi
-  const [historySaved, setHistorySaved] = useState(false);
-  const correctCountRef = useRef(0);
+  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
+  const [userScore, setUserScore] = useState(0);
+  const [answeredQuestions, setAnsweredQuestions] = useState({});
+  const [feedback, setFeedback] = useState(null);
+  const [showResults, setShowResults] = useState(false);
+  const [timerRemaining, setTimerRemaining] = useState(null);
+  const [questionStartTime, setQuestionStartTime] = useState(null);
+  const [quizHistorySaved, setQuizHistorySaved] = useState(false);
+  const [error, setError] = useState('');
+  const [playerAnswered, setPlayerAnswered] = useState(false); // PlayerAnswered state'i eklendi
 
-  // Cevapları ve doğru sayısını takip etmek için bir dizi ekleyelim
-  const [answers, setAnswers] = useState([]);
+  // audioRef için useRef kullanılıyor
+  const audioRef = useRef(null); // Eğer bir ses çalma özelliği varsa
 
-  // Arka plan müziği için ref ve state
-  const audioRef = useRef(null);
-  const [musicPlaying, setMusicPlaying] = useState(true);
-
-  // Sayfa yüklendiğinde quiz detayını backend'den çek
   useEffect(() => {
-    getQuizById(id).then(res => setQuiz(res.data));
-  }, [id]);
-
-  // Cevap verildiğinde bir sonraki soruya geçiş
-  const handleAnswer = (selected) => {
-    setAnswer(selected);
-    setShowTimer(false);
-    setAnswers(prev => [...prev, selected]);
-    setTimeout(() => {
-      setCurrentQ(q => q + 1); // Sonraki soruya geç
-      setAnswer('');
-      setShowTimer(true);
-    }, 1000);
-  };
-
-  // Süre dolduğunda otomatik sonraki soruya geçiş
-  const handleTimeout = () => {
-    setShowTimer(false);
-    setAnswers(prev => [...prev, null]); // Cevap verilmediyse null ekle
-    setTimeout(() => {
-      setCurrentQ(q => q + 1);
-      setAnswer('');
-      setShowTimer(true);
-    }, 1000);
-  };
-
-  // Quiz başladığında müziği başlat
-  useEffect(() => {
-    if (audioRef.current && musicPlaying) {
-      audioRef.current.volume = 0.25;
-      audioRef.current.play().catch(() => {});
-    }
-    return () => {
-      if (audioRef.current) audioRef.current.pause();
-    };
-  }, [musicPlaying]);
-
-  // Quiz bitiminde geçmişi kaydet (koşul dışında, hook kuralına uygun)
-  useEffect(() => {
-    if (
-      quiz &&
-      answers.length === quiz.questions.length &&
-      !historySaved
-    ) {
-      // Doğru cevap sayısını hesapla
-      const correctCount = quiz.questions.reduce((acc, q, idx) => {
-        if (answers[idx] && q.options[q.correctIndex] === answers[idx]) return acc + 1;
-        return acc;
-      }, 0);
-      correctCountRef.current = correctCount;
-      const token = localStorage.getItem('token');
-      if (token && quiz._id) {
-        saveQuizHistory(quiz._id, {
-          score: correctCount,
-          date: new Date(),
-          mode: 'bireysel'
-        }, token).finally(() => setHistorySaved(true));
-      } else {
-        setHistorySaved(true);
+    async function fetchQuiz() {
+      try {
+        const res = await getQuizById(quizId);
+        setQuiz({ ...res.data, questions: JSON.parse(res.data.questions || '[]') });
+      } catch (err) {
+        console.error('Quiz çekilemedi:', err);
+        setError('Quiz yüklenemedi veya bulunamadı.');
       }
     }
-  }, [quiz, answers, historySaved]);
+    fetchQuiz();
+  }, [quizId]);
 
-  // Quiz yükleniyorsa loading mesajı göster
-  if (!quiz) return <div>Yükleniyor...</div>;
-  // Tüm sorular bittiğinde quiz bitti mesajı ve yönlendirme butonları göster
-  if (currentQ >= quiz.questions.length) return (
-    <div style={{ padding: 32 }}>
-      <audio ref={audioRef} src={MUSIC_URL} autoPlay loop style={{ display: 'none' }} />
-      <h2>Quiz bitti!</h2>
-      <div>Doğru sayınız: {correctCountRef.current} / {quiz.questions.length}</div>
-      <button onClick={() => navigate('/')}>Ana Sayfa</button>
-      <button style={{ marginLeft: 8 }} onClick={() => navigate('/profile')}>Profilim / Geçmişim</button>
-      <button style={{ marginLeft: 16 }} onClick={() => setMusicPlaying(p => !p)}>{musicPlaying ? 'Müziği Durdur' : 'Müziği Başlat'}</button>
-    </div>
-  );
+  // handleSubmitAnswer'ı useCallback ile sarmalıyoruz ve bağımlılıklarını ekliyoruz
+  const handleSubmitAnswer = useCallback((questionId, selectedOptionId, submissionTime) => {
+    if (!quiz || answeredQuestions[questionId]) return;
 
-  // Mevcut soru
-  const q = quiz.questions[currentQ];
+    const currentQuestion = quiz.questions[currentQuestionIndex];
+    let isCorrect = false;
+    let pointsEarned = 0;
+    const MAX_POINTS = 1000;
+    const TIME_LIMIT_SECONDS = 20;
+
+    const correctOption = currentQuestion.options.find(opt => opt.option_text === currentQuestion.correct_answer_option_text);
+    
+    if (selectedOptionId && correctOption && selectedOptionId === correctOption.id) {
+      isCorrect = true;
+      const timeTakenMs = submissionTime - (questionStartTime || Date.now()); // questionStartTime null olabilir
+      const timeRemainingMs = (TIME_LIMIT_SECONDS * 1000) - timeTakenMs;
+
+      if (timeRemainingMs > 0) {
+        pointsEarned = Math.round(MAX_POINTS * (timeRemainingMs / (TIME_LIMIT_SECONDS * 1000)));
+        if (pointsEarned < 50) pointsEarned = 50;
+      }
+    }
+
+    setUserScore(prevScore => prevScore + pointsEarned);
+    setAnsweredQuestions(prev => ({ ...prev, [questionId]: selectedOptionId }));
+    setFeedback({ isCorrect, pointsEarned, selectedOptionId }); // selectedOptionId de eklendi
+    setPlayerAnswered(true); // Cevaplandığını işaretle
+    setTimerRemaining(0);
+  }, [quiz, currentQuestionIndex, answeredQuestions, questionStartTime, setUserScore, setAnsweredQuestions, setFeedback, setPlayerAnswered, setTimerRemaining]); // Bağımlılıklar eklendi
+
+  useEffect(() => {
+    if (quiz && currentQuestionIndex < quiz.questions.length && questionStartTime !== null && !answeredQuestions[quiz.questions[currentQuestionIndex].id]) {
+      const timerInterval = setInterval(() => {
+        const elapsed = (Date.now() - questionStartTime) / 1000;
+        const remaining = 20 - Math.floor(elapsed);
+        setTimerRemaining(Math.max(0, remaining));
+
+        if (remaining <= 0) {
+          clearInterval(timerInterval);
+          handleSubmitAnswer(
+            quiz.questions[currentQuestionIndex].id,
+            null,
+            Date.now()
+          );
+        }
+      }, 1000);
+
+      return () => clearInterval(timerInterval);
+    }
+  }, [quiz, currentQuestionIndex, questionStartTime, answeredQuestions, handleSubmitAnswer]); // handleSubmitAnswer bağımlılığa eklendi
+
+  useEffect(() => {
+    if (quiz && quiz.questions[currentQuestionIndex]) {
+      setQuestionStartTime(Date.now());
+      setTimerRemaining(20);
+      setPlayerAnswered(false);
+      setFeedback(null);
+    }
+  }, [quiz, currentQuestionIndex]);
+
+  // Audio ref cleanup
+  useEffect(() => {
+    const currentAudioRef = audioRef.current; // Ref değerini değişkene atama
+    if (currentAudioRef) {
+      // Audio çalma/durdurma mantığı buraya gelebilir
+    }
+    return () => {
+      // Cleanup fonksiyonu, currentAudioRef'i kullanır
+      if (currentAudioRef) {
+        // currentAudioRef.pause();
+        // currentAudioRef.currentTime = 0;
+      }
+    };
+  }, [audioRef]); // audioRef bağımlılıklarda
+
+  const handleNextQuestion = () => {
+    if (currentQuestionIndex < quiz.questions.length - 1) {
+      setCurrentQuestionIndex(currentQuestionIndex + 1);
+      setPlayerAnswered(false); // Yeni soruya geçerken sıfırla
+    } else {
+      setShowResults(true);
+      if (user && !quizHistorySaved) {
+        const historyData = {
+          quizId: quiz.id,
+          score: userScore,
+          date: new Date().toISOString()
+        };
+        saveQuizHistory(quiz.id, historyData); // quizId parametresini ekledik
+        setQuizHistorySaved(true);
+      }
+    }
+  };
+
+  if (error) {
+    return (
+      <div style={{ textAlign: 'center', padding: '50px', color: 'red' }}>
+        <p>Hata: {error}</p>
+        <button onClick={() => navigate('/quiz-list')}>Quiz Listesine Dön</button>
+      </div>
+    );
+  }
+
+  if (!quiz) {
+    return (
+      <div style={{ textAlign: 'center', padding: '50px', color: '#fff' }}>
+        <p>Quiz yükleniyor...</p>
+      </div>
+    );
+  }
 
   return (
-    <div style={{ padding: 32 }}>
-      <audio ref={audioRef} src={MUSIC_URL} autoPlay loop style={{ display: 'none' }} />
-      <h2>{quiz.title}</h2>
-      <button style={{ marginBottom: 12 }} onClick={() => setMusicPlaying(p => !p)}>{musicPlaying ? 'Müziği Durdur' : 'Müziği Başlat'}</button>
-      <div style={{ marginBottom: 16 }}>
-        <b>{q.text}</b>
-        <ul>
-          {q.options.map((opt, i) => (
-            <li key={i}>
-              <button
-                disabled={!!answer}
-                onClick={() => handleAnswer(opt)}
-                style={{
-                  opacity: answer && answer !== opt ? 0.5 : 1,
-                  cursor: answer ? 'not-allowed' : 'pointer',
-                  background: answer === opt ? '#d1e7dd' : undefined
-                }}
-              >
-                {opt}
-              </button>
-            </li>
-          ))}
-        </ul>
-        {/* Soru için zamanlayıcı */}
-        {showTimer && <QuestionTimer duration={10} onTimeout={handleTimeout} />}
-        {/* Kullanıcı cevabı */}
-        {answer && <div style={{ color: 'green' }}>Cevabınız: {answer}</div>}
-      </div>
+    <div style={{
+      minHeight: 'calc(100vh - 80px)',
+      background: 'linear-gradient(120deg, #6a11cb 0%, #2575fc 100%)',
+      padding: '20px',
+      color: '#fff',
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      justifyContent: 'center'
+    }}>
+      {!showResults ? (
+        <div style={{ textAlign: 'center', background: '#fff', color: '#333', borderRadius: 12, padding: 30, boxShadow: '0 4px 20px rgba(0,0,0,0.1)', width: '100%', maxWidth: 700 }}>
+          <h3 style={{ marginBottom: 20, color: '#2575fc' }}>
+            Soru {currentQuestionIndex + 1} / {quiz.questions.length}
+          </h3>
+          <QuestionComponent 
+            question={quiz.questions[currentQuestionIndex]}
+            onAnswer={handleSubmitAnswer}
+            playerAnswered={playerAnswered}
+            feedback={feedback}
+            timerRemaining={timerRemaining}
+          />
+          <button 
+            onClick={handleNextQuestion} 
+            disabled={!playerAnswered}
+            style={{ background: '#6a11cb', color: '#fff', border: 'none', borderRadius: 10, padding: '10px 20px', fontSize: 16, fontWeight: 'bold', marginTop: 20, cursor: 'pointer' }}
+          >
+            Sonraki Soru
+          </button>
+        </div>
+      ) : (
+        <div style={{ textAlign: 'center', background: '#fff', color: '#333', borderRadius: 12, padding: 30, boxShadow: '0 4px 20px rgba(0,0,0,0.1)', width: '100%', maxWidth: 500 }}>
+          <h2 style={{ color: '#6a11cb', marginBottom: 20 }}>Quiz Bitti!</h2>
+          <p style={{ fontSize: 24, fontWeight: 'bold' }}>Toplam Skorunuz: {userScore}</p>
+          <Leaderboard roomId={quizId} scores={[{ username: user?.username || user?.email, score: userScore }]} /> {/* Leaderboard bileşeni kullanıldı */}
+          <button 
+            onClick={() => navigate('/quiz-list')} 
+            style={{ background: '#1abc9c', color: '#fff', border: 'none', borderRadius: 10, padding: '12px 25px', fontSize: 18, fontWeight: 'bold', cursor: 'pointer', marginTop: 20 }}
+          >
+            Quiz Listesine Dön
+          </button>
+        </div>
+      )}
     </div>
   );
 }
