@@ -9,3 +9,4 @@ const Leaderboard = ({ players }) => (
     ))}
   </div>
 );
+export default Leaderboard;
