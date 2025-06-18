@@ -14,7 +14,7 @@ import {
   updateAdminQuiz
 } from '../services/api';
 
-// MUI Icons
+// MUI Icons - Tüm kullanılan iconların burada olduğundan emin olun
 import QuizIcon from '@mui/icons-material/Quiz';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
@@ -22,7 +22,8 @@ import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import StopIcon from '@mui/icons-material/Stop';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 
-// Geçici ID sayaçları
+// Geçici ID sayaçları (düzenleme modalı içindeki sorular için)
+// Bunlar fonksiyonun dışında tanımlanabilir veya addEditQuestion içinde Date.now()+Math.random() kullanılabilir
 let nextEditOptionTempId = 1; 
 let nextEditQuestionTempId = 1;
 
@@ -46,30 +47,36 @@ function QuizList() {
   const handleEditQuestionTextChange = useCallback((qIndex, value) => {
     setEditQuestions(prev => {
       const updated = [...prev];
-      updated[qIndex].question_text = value;
+      if (updated[qIndex]) { // Dizideki elemanın varlığını kontrol et
+        updated[qIndex].question_text = value;
+      }
       return updated;
     });
-  }, []);
-  
+  }, []); // Bağımlılık dizisi boş bırakıldı çünkü içeride dışarıdan bir state/prop kullanılmıyor.
+
   // handleEditOptionTextChange fonksiyonu (useCallback ile optimize edildi)
   const handleEditOptionTextChange = useCallback((qIndex, optIndex, value) => {
     setEditQuestions(prev => {
       const updated = [...prev];
-      updated[qIndex].options[optIndex].option_text = value;
+      if (updated[qIndex] && updated[qIndex].options && updated[qIndex].options[optIndex]) {
+        updated[qIndex].options[optIndex].option_text = value;
+      }
       return updated;
     });
-  }, []);
+  }, []); // Bağımlılık dizisi boş bırakıldı.
 
   // handleEditCorrectChange fonksiyonu (useCallback ile optimize edildi)
   const handleEditCorrectChange = useCallback((qIndex, optionTempId) => {
     setEditQuestions(prev => {
       const updated = [...prev];
-      updated[qIndex].correct_answer_option_temp_id = optionTempId;
+      if (updated[qIndex]) {
+        updated[qIndex].correct_answer_option_temp_id = optionTempId;
+      }
       return updated;
     });
-  }, []);
+  }, []); // Bağımlılık dizisi boş bırakıldı.
 
-  // addEditQuestion fonksiyonu (useCallback ile optimize edildi)
+  // Yeni soru ekle (düzenleme modalı içinde) (useCallback ile optimize edildi)
   const addEditQuestion = useCallback(() => {
     setEditQuestions(prev => {
       const newOptions = [
@@ -86,12 +93,12 @@ function QuizList() {
         correct_answer_option_temp_id: null 
       }];
     });
-  }, []);
+  }, []); // Bağımlılık dizisi boş bırakıldı.
 
-  // removeEditQuestion fonksiyonu (useCallback ile optimize edildi)
+  // Soru sil (düzenleme modalı içinde) (useCallback ile optimize edildi)
   const removeEditQuestion = useCallback((index) => {
     setEditQuestions(prev => prev.filter((_, i) => i !== index));
-  }, []);
+  }, []); // Bağımlılık dizisi boş bırakıldı.
 
 
   useEffect(() => {
@@ -113,7 +120,7 @@ function QuizList() {
       }
     };
     fetchQuizzes();
-  }, [user]);
+  }, [user]); // user değiştiğinde (giriş/çıkış) quizleri tekrar çek.
 
 
   const handleDelete = async (id) => {
@@ -129,7 +136,7 @@ function QuizList() {
     }
   };
 
-  const handleEdit = (quiz) => {
+  const handleEdit = useCallback((quiz) => { // useCallback eklendi
     setEditQuiz(quiz);
     setEditTitle(quiz.title);
     setEditDescription(quiz.description);
@@ -145,7 +152,7 @@ function QuizList() {
     }));
     setEditQuestions(JSON.parse(JSON.stringify(questionsWithTempIds)));
     setShowEdit(true);
-  };
+  }, []); // Bağımlılıkları kontrol edin (quiz parametresi dışarıdan geliyor)
 
   const handleUpdate = async (e) => {
     e.preventDefault();
@@ -304,7 +311,7 @@ function QuizList() {
                     <div style={{ marginTop: 6 }}>
                       {q.options.map((opt, i) => (
                         <span key={opt.tempId || i} style={{ display: 'inline-block', marginRight: 8 }}>
-                          <input value={opt.option_text || ''} onChange={e => handleEditOptionChange(idx, i, e.target.value)} placeholder={`Seçenek ${opt.option_letter}`} required style={{ width: 120, borderRadius: 8, border: '1px solid #ddd', padding: 6 }} />
+                          <input value={opt.option_text || ''} onChange={e => handleEditOptionTextChange(idx, i, e.target.value)} placeholder={`Seçenek ${opt.option_letter}`} required style={{ width: 120, borderRadius: 8, border: '1px solid #ddd', padding: 6 }} />
                           <input type="radio" name={`edit-correct-${idx}`} checked={q.correct_answer_option_id === opt.id} onChange={() => handleEditCorrectChange(idx, opt.id)} />
                           <span style={{ fontSize: 13, color: '#888' }}>Doğru</span>
                         </span>
@@ -337,4 +344,4 @@ function QuizList() {
   );
 }
 
-export default AdminPanel;
+export default QuizList;
