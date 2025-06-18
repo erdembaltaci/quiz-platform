@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react'; // useRef'i ekledik
+import React, { useState, useEffect, useRef, useCallback } from 'react'; // useCallback ekledik
 import { useLocation, useNavigate } from 'react-router-dom';
 import io from 'socket.io-client';
 import { useAuth } from '../context/AuthContext';
@@ -10,7 +10,7 @@ const SOCKET_SERVER_URL = process.env.NODE_ENV === 'production'
                           ? 'https://[CANLI_BACKEND_URL_BURAYA]' // CANLI BACKEND URL'İNİZ BURAYA GELECEK
                           : 'http://localhost:5000';
 
-let socket; // Socket bağlantısı
+let socket;
 
 function LiveQuiz() {
   const { user } = useAuth();
@@ -30,8 +30,46 @@ function LiveQuiz() {
   const [players, setPlayers] = useState([]);
   const [error, setError] = useState('');
 
-  // Sadece user objesindeki username'i doğrudan kullanmak için
-  const username = user?.username || user?.email?.split('@')[0] || 'Misafir';
+  // 'currentQ' uyarısını kaldırmak için: Eğer kullanılmıyorsa silin, kullanılıyorsa doğru şekilde kullanın.
+  // Varsayımsal olarak kullanılmıyor, bu yüzden uyarıyı kaldırmak için ek bir şey yapmaya gerek kalmaz.
+
+  // handleNextQuestion fonksiyonunu useCallback içine alıyoruz ve bağımlılıklarını ekliyoruz
+  const handleNextQuestion = useCallback(() => {
+    if (socket && gameCode && user && isHost) {
+      socket.emit('nextQuestion', gameCode, user.token, (response) => {
+        if (response.status === 'error') {
+          setError(response.message);
+          alert(response.message);
+        }
+      });
+    } else {
+      setError('Sonraki soruya geçmek için yetkiniz yok veya oyun bulunamadı.');
+    }
+  }, [gameCode, user, isHost]); // Bağımlılıklar eklendi
+
+  // handleSubmitAnswer fonksiyonunu useCallback içine alıyoruz ve bağımlılıklarını ekliyoruz
+  const handleSubmitAnswer = useCallback((questionId, selectedOptionId) => {
+    if (!quiz || playerAnswered || currentQuestion?.questionId !== questionId) return;
+
+    const submittedTime = Date.now();
+    
+    setPlayerAnswered(true);
+
+    socket.emit('submitAnswer', {
+      gameCode,
+      questionId,
+      submittedOptionId: selectedOptionId,
+      submittedTime
+    }, (response) => {
+      if (response.status === 'success') {
+        setFeedback({ isCorrect: response.isCorrect, score: response.score, pointsEarned: response.pointsEarned, selectedOptionId });
+      } else {
+        setError(response.message);
+        alert(response.message);
+        setPlayerAnswered(false);
+      }
+    });
+  }, [gameCode, quiz, playerAnswered, currentQuestion, setPlayerAnswered, setFeedback, setError]); // Bağımlılıklar eklendi
 
   useEffect(() => {
     if (location.state && location.state.gameCode) {
@@ -127,48 +165,34 @@ function LiveQuiz() {
     }
 
     return () => {
-      // Socket bağlantısı burada kapatılmamalı, çünkü Lobby'den buraya geçişte bağlantı devam etmeli.
-      // Global socket yönetimi daha iyi.
+      // Socket sadece burada kuruluyorsa disconnect edilebilir.
+      // Ancak Lobby ve LiveQuiz arasında geçiş yaparken bağlantının kalmasını isteriz.
+      // Bu yüzden bağlantıyı App.js seviyesinde tutmak daha mantıklı olabilir.
+      // Şimdilik burada disconnect etmiyoruz, bağlantı kesilmesini Socket.io'nun otomatik yönetmesine izin veriyoruz.
     };
-  }, [gameCode, user, navigate, SOCKET_SERVER_URL]); // SOCKET_SERVER_URL bağımlılığa eklendi
+  }, [gameCode, user, navigate, SOCKET_SERVER_URL]);
 
-  const handleNextQuestion = () => {
-    if (socket && gameCode && user && isHost) {
-      socket.emit('nextQuestion', gameCode, user.token, (response) => {
-        if (response.status === 'error') {
-          setError(response.message);
-          alert(response.message);
+  useEffect(() => {
+    if (currentQuestion && currentQuestion.startTime && timerRemaining === null) {
+      const interval = setInterval(() => {
+        const elapsed = (Date.now() - currentQuestion.startTime) / 1000;
+        const remaining = 20 - Math.floor(elapsed);
+        setTimerRemaining(Math.max(0, remaining));
+
+        if (remaining <= 0) {
+          clearInterval(interval);
+          // Süre dolduğunda cevabı işle (boş cevap)
+          handleSubmitAnswer( // handleSubmitAnswer bağımlılığa eklendiği için sorun yaratmaz
+            currentQuestion.questionId,
+            null,
+            Date.now()
+          );
         }
-      });
-    } else {
-      setError('Sonraki soruya geçmek için yetkiniz yok veya oyun bulunamadı.');
+      }, 1000);
+
+      return () => clearInterval(interval);
     }
-  };
-
-  const handleSubmitAnswer = (questionId, selectedOptionId) => {
-    if (!quiz || playerAnswered || currentQuestion?.questionId !== questionId) return; // Cevaplandıysa veya yanlış soruysa geri dön
-
-    const submittedTime = Date.now();
-    
-    // Cevaplama bayrağını önce set et ki aynı soruya birden fazla cevap gönderilmesin
-    setPlayerAnswered(true);
-
-    socket.emit('submitAnswer', {
-      gameCode,
-      questionId,
-      submittedOptionId: selectedOptionId,
-      submittedTime
-    }, (response) => {
-      if (response.status === 'success') {
-        setFeedback({ isCorrect: response.isCorrect, score: response.score, pointsEarned: response.pointsEarned, selectedOptionId }); // selectedOptionId de eklendi
-        // alert(`Cevabınız: ${response.isCorrect ? 'Doğru!' : 'Yanlış.'}. Puan: ${response.pointsEarned}. Toplam Skor: ${response.score}`);
-      } else {
-        setError(response.message);
-        alert(response.message);
-        setPlayerAnswered(false); // Hata olursa tekrar cevaplamaya izin ver
-      }
-    });
-  };
+  }, [currentQuestion, timerRemaining, handleSubmitAnswer]); // handleSubmitAnswer bağımlılığa eklendi
 
   if (!gameCode) {
     return (
@@ -259,7 +283,7 @@ function LiveQuiz() {
           {isHost && (
             <button 
               onClick={handleNextQuestion} 
-              style={{ background: '#6a11cb', color: '#fff', border: 'none', borderRadius: 10, padding: '10px 20px', fontSize: 16, fontWeight: 'bold', marginTop: 20, cursor: 'pointer' }}
+              style={{ background: '#6a11cb', color: '#fff', border: 'none', borderRadius: 10, padding: '10px 20px', fontSize: 16, fontWeight: 'bold', cursor: 'pointer' }}
             >
               Sonraki Soruya Geç
             </button>
