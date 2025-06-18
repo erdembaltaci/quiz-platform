@@ -7,7 +7,6 @@
   ],
   "headers": [
     {
-      // DÜZELTİLDİ: "**/*" yerine "(.*)" kullanılarak tüm yollar için geçerli regex eşleşmesi
       "source": "/(.*)", 
       "headers": [
         {"key": "Cache-Control", "value": "public, max-age=0, must-revalidate"},
