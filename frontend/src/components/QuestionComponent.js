@@ -43,3 +43,4 @@ const QuestionComponent = ({ question, onAnswerSubmit, timeLimit = 20 }) => {
     </div>
   );
 };
+export default QuestionComponent; 
