@@ -34,8 +34,8 @@ function QuizList() {
   const [editQuestions, setEditQuestions] = useState([]);
   const [showEdit, setShowEdit] = useState(false);
   const [liveRoomCodes, setLiveRoomCodes] = useState({});
-  
-  const navigate = useNavigate(); // Bu kullanılıyor, uyarı kalkar
+
+  const navigate = useNavigate();
 
   const isTeacherOrAdmin = user && (user.role === 'teacher' || user.role === 'admin');
   const isAdmin = user?.role === 'admin';
@@ -44,7 +44,7 @@ function QuizList() {
     const fetchQuizzes = async () => {
       try {
         const quizRes = await apiGetQuizzes(); 
-        
+
         setQuizzes(quizRes.data.map(q => ({ 
             ...q, 
             id: q.id,
@@ -97,7 +97,7 @@ function QuizList() {
   const handleUpdate = async (e) => {
     e.preventDefault();
     if (!editQuiz) return;
-    
+
     if (!editTitle.trim() || !editDescription.trim()) {
       alert('Başlık ve açıklama boş bırakılamaz.');
       return;
@@ -113,29 +113,27 @@ function QuizList() {
       const updatedQuizData = {
         title: editTitle,
         description: editDescription,
-        questions: JSON.stringify(editQuestions.map(q => {
-          const correctAnswerOption = q.options.find(opt => opt.tempId === q.correct_answer_option_temp_id);
-          return {
-            question_text: q.question_text,
-            question_type: q.question_type,
-            correct_answer_option_text: correctAnswerOption ? correctAnswerOption.option_text : null,
-            options: q.options.map(opt => ({
-              option_letter: opt.option_letter,
-              option_text: opt.option_text
-            }))
-          };
-        }))
+        // DÜZELTİLDİ: map callback'i {} yerine () => ({}) ile implicit return kullanıyor
+        questions: JSON.stringify(editQuestions.map(q => ({
+          question_text: q.question_text,
+          question_type: q.question_type,
+          correct_answer_option_text: q.options.find(opt => opt.tempId === q.correct_answer_option_temp_id)?.option_text || null, // Doğru cevabın metnini al
+          options: q.options.map(opt => ({
+            option_letter: opt.option_letter,
+            option_text: opt.option_text
+          }))
+        }))) // JSON.stringify'ın kapanışı
       };
 
       const res = await apiUpdateQuiz(editQuiz.id, updatedQuizData);
-      
+
       setQuizzes(quizzes.map(q => (q.id === editQuiz.id ? { ...res.data, questions: JSON.parse(res.data.questions || '[]') } : q)));
       setShowEdit(false);
       setEditQuiz(null);
       alert('Quiz başarıyla güncellendi!');
     } catch (error) {
       console.error('Quiz güncelleme hatası:', error.response?.data?.message || error.message);
-      alert('Quiz güncellenemedi: ' + (error.response?.data?.message || 'Sadece kendi oluşturduğunuz quizleri güncelleyebilirsiniz.');
+      alert('Quiz güncellenemedi: ' + (error.response?.data?.message || 'Sadece kendi oluşturduğunuz quizleri güncelleyebilirsiniz.'));
     }
   };
 
@@ -228,18 +226,18 @@ function QuizList() {
         <h2 style={{ display: 'flex', alignItems: 'center', color: '#3b3b5c', fontWeight: 700, fontSize: 28, marginBottom: 24 }}>
           <QuizIcon style={{ marginRight: 10, color: '#6a11cb' }} /> Quizler
         </h2>
-        
+
         {quizzes.length === 0 && <p style={{ textAlign: 'center', color: '#666' }}>Henüz gösterilecek bir quiz yok. Yeni bir quiz oluşturmak için "Quiz Oluştur" bağlantısını kullanın.</p>}
         {quizzes.map(quiz => (
           <div className="quiz-card" key={quiz.id} style={{ background: '#f7f8fa', borderRadius: 12, boxShadow: '0 2px 8px #0001', padding: 20, marginBottom: 18 }}>
             <h3 style={{ marginBottom: 8, color: '#2575fc' }}>{quiz.title}</h3>
             <div style={{ color: '#888', marginBottom: 8 }}>{quiz.description}</div>
             <div style={{ fontSize: 14, color: '#aaa', marginBottom: 8 }}>Oluşturan: {quiz.created_by_username || quiz.created_by_email || 'Bilinmiyor'}</div>
-            
+
             <button onClick={() => navigate(`/play-quiz/${quiz.id}`)} style={{ background: '#2575fc', color: '#fff', border: 'none', borderRadius: 8, padding: '8px 18px', fontWeight: 600, cursor: 'pointer', marginRight: 8 }}>
               Quiz Oyna
             </button>
-            
+
             {isTeacherOrAdmin && quiz.host_user_id === user?.id && (
               <>
                 <button style={{ background: '#6a11cb', color: '#fff', border: 'none', borderRadius: 8, padding: '8px 14px', fontWeight: 600, marginLeft: 8, cursor: 'pointer' }} onClick={() => handleEdit(quiz)}>Düzenle</button>
