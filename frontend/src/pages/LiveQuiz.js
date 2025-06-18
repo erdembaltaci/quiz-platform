@@ -1,215 +1,290 @@
-// Canlı quiz odası ve gerçek zamanlı quiz akışı için ana bileşen
-import React, { useEffect, useState, useRef } from 'react';
-import { io } from 'socket.io-client';
-import { getQuizByRoomCode, saveQuizHistory } from '../services/api';
-import Leaderboard from './Leaderboard';
-import QuestionTimer from './QuestionTimer';
+import React, { useState, useEffect, useRef } from 'react'; // useRef'i ekledik
 import { useLocation, useNavigate } from 'react-router-dom';
+import io from 'socket.io-client';
+import { useAuth } from '../context/AuthContext';
+import QuestionComponent from '../components/QuestionComponent';
+import Leaderboard from '../components/Leaderboard';
+import { getQuizByRoomCode } from '../services/api';
 
-// Socket.io bağlantısı (backend ile gerçek zamanlı iletişim)
-const socket = io('http://localhost:5000');
+const SOCKET_SERVER_URL = process.env.NODE_ENV === 'production' 
+                          ? 'https://[CANLI_BACKEND_URL_BURAYA]' // CANLI BACKEND URL'İNİZ BURAYA GELECEK
+                          : 'http://localhost:5000';
 
-// Arka plan müziği için basit bir mp3 dosyası (public klasörüne eklenmeli)
-const MUSIC_URL = process.env.PUBLIC_URL + '/quiz-music.mp3';
+let socket; // Socket bağlantısı
 
 function LiveQuiz() {
-  // State'ler: oda kodu, kullanıcı adı, quiz objesi, sorular, skorlar, vs.
-  const [roomCode, setRoomCode] = useState(''); // Oda kodu
-  const [username, setUsername] = useState(""); // Kullanıcı adı
-  const [joined, setJoined] = useState(false); // Odaya katılım durumu
-  const [quiz, setQuiz] = useState(null); // Quiz objesi
-  const [currentQ, setCurrentQ] = useState(0); // Şu anki soru indeksi
-  const [question, setQuestion] = useState(null); // Şu anki soru
-  const [answer, setAnswer] = useState(''); // Kullanıcının cevabı
-  const [showTimer, setShowTimer] = useState(false); // Zamanlayıcı gösterilsin mi
-  const [quizEnd, setQuizEnd] = useState(false); // Quiz bitti mi
-  const [scores, setScores] = useState([]); // Skor tablosu
-  const [waitingOthers, setWaitingOthers] = useState(false); // Diğer oyuncuları bekliyor muyuz?
-  const [historySaved, setHistorySaved] = useState(false); // Skor geçmişi kaydedildi mi
-  const userIdRef = useRef(socket.id); // Socket id referansı
+  const { user } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
-  // Arka plan müziği için ref ve state
-  const audioRef = useRef(null);
-  const [musicPlaying, setMusicPlaying] = useState(true);
 
-  // Socket eventleri: quiz akışını ve skorları yönetir
+  const [gameCode, setGameCode] = useState('');
+  const [quiz, setQuiz] = useState(null);
+  const [currentQuestion, setCurrentQuestion] = useState(null);
+  const [playerAnswered, setPlayerAnswered] = useState(false);
+  const [feedback, setFeedback] = useState(null);
+  const [showLeaderboard, setShowLeaderboard] = useState(false);
+  const [gameScores, setGameScores] = useState([]);
+  const [gameStatus, setGameStatus] = useState('waiting');
+  const [timerRemaining, setTimerRemaining] = useState(null);
+  const [isHost, setIsHost] = useState(false);
+  const [players, setPlayers] = useState([]);
+  const [error, setError] = useState('');
+
+  // Sadece user objesindeki username'i doğrudan kullanmak için
+  const username = user?.username || user?.email?.split('@')[0] || 'Misafir';
+
   useEffect(() => {
-    // Yeni soru geldiğinde state güncellenir
-    socket.on('question', ({ index, question }) => {
-      setCurrentQ(index);
-      setQuestion(question);
-      setAnswer('');
-      setShowTimer(true);
-      setWaitingOthers(false); // Yeni soru gelince bekleme kalkar
-    });
-    // Cevap alındığında (isteğe bağlı kullanılabilir)
-    socket.on('receiveAnswer', ({ userId, answer, isCorrect }) => {
-      // İsterseniz cevapları listeleyebilirsiniz
-    });
-    // Skor tablosu güncellendiğinde
-    socket.on('updateScores', (newScores) => {
-      setScores(newScores);
-    });
-    // Quiz bittiğinde skorlar ve durum güncellenir
-    socket.on('quizEnd', async ({ scores }) => {
-      setQuizEnd(true);
-      setScores(scores);
-      setShowTimer(false);
-      // Quiz geçmişini kaydet (sadece bir kez kaydetmek için kontrol ekle)
-      if (!historySaved && quiz && username) {
-        try {
-          await saveQuizHistory({
-            quizId: quiz._id,
-            score: scores.find(s => s.username === username)?.score || 0,
-            mode: 'canli',
-            date: new Date().toISOString()
-          });
-          setHistorySaved(true);
-        } catch (err) {
-          // Hata yönetimi (opsiyonel bildirim)
-          console.error('Quiz geçmişi kaydedilemedi:', err);
+    if (location.state && location.state.gameCode) {
+      setGameCode(location.state.gameCode);
+      setIsHost(location.state.isHost || false);
+    } else {
+      setError('Oyun kodu bulunamadı. Lütfen bir oyun odasına katılın.');
+    }
+  }, [location.state, navigate]);
+
+  useEffect(() => {
+    if (!gameCode) return;
+
+    if (!socket) {
+      socket = io(SOCKET_SERVER_URL);
+      console.log('LiveQuiz: Socket.IO bağlantısı kuruldu.');
+
+      socket.on('connect', () => {
+        console.log('LiveQuiz: Sunucuya bağlandı. ID:', socket.id);
+      });
+
+      socket.on('disconnect', () => {
+        console.log('LiveQuiz: Sunucu bağlantısı kesildi.');
+        setError('Sunucu bağlantısı kesildi.');
+      });
+
+      socket.on('gameError', (data) => {
+        console.error('LiveQuiz: Socket hatası:', data.message);
+        setError(data.message);
+        alert(data.message);
+      });
+
+      socket.on('gameStarted', (data) => {
+        console.log('LiveQuiz: Oyun başladı:', data);
+        setGameStatus('in_progress');
+        setPlayers(data.players || []);
+        setShowLeaderboard(false);
+        setFeedback(null);
+        setPlayerAnswered(false);
+      });
+
+      socket.on('question', (data) => {
+        console.log('LiveQuiz: Yeni soru geldi:', data);
+        setCurrentQuestion(data);
+        setPlayerAnswered(false);
+        setFeedback(null);
+        setTimerRemaining(null);
+        setShowLeaderboard(false);
+      });
+
+      socket.on('timerEnded', (data) => {
+        console.log('LiveQuiz: Süre doldu:', data.message);
+        setShowLeaderboard(true);
+      });
+
+      socket.on('answerSubmitted', (data) => {
+        console.log('LiveQuiz: Cevap gönderildi geri bildirimi:', data);
+      });
+
+      socket.on('updateScores', (data) => {
+        console.log('LiveQuiz: Skorlar güncellendi:', data.scores);
+        setGameScores(data.scores);
+      });
+
+      socket.on('gameEnded', (data) => {
+        console.log('LiveQuiz: Oyun bitti:', data);
+        setGameStatus('completed');
+        setGameScores(data.finalScores);
+        setShowLeaderboard(true);
+        setCurrentQuestion(null);
+        alert(data.message + '\nOyun bitti! Final skorları görüntülenecek.');
+      });
+
+      socket.on('playersUpdated', (data) => {
+        console.log('LiveQuiz: Oyuncular güncellendi:', data.players);
+        setPlayers(data.players);
+      });
+    }
+
+    const fetchQuizDetails = async () => {
+      try {
+        const res = await getQuizByRoomCode(gameCode);
+        setQuiz({ ...res.data, questions: JSON.parse(res.data.questions || '[]') }); 
+        setGameStatus(res.data.status || 'waiting');
+      } catch (error) {
+        console.error('LiveQuiz: Quiz detayları çekilirken hata:', error);
+        setError('Quiz detayları yüklenemedi.');
+      }
+    };
+
+    if (gameCode) {
+      fetchQuizDetails();
+    }
+
+    return () => {
+      // Socket bağlantısı burada kapatılmamalı, çünkü Lobby'den buraya geçişte bağlantı devam etmeli.
+      // Global socket yönetimi daha iyi.
+    };
+  }, [gameCode, user, navigate, SOCKET_SERVER_URL]); // SOCKET_SERVER_URL bağımlılığa eklendi
+
+  const handleNextQuestion = () => {
+    if (socket && gameCode && user && isHost) {
+      socket.emit('nextQuestion', gameCode, user.token, (response) => {
+        if (response.status === 'error') {
+          setError(response.message);
+          alert(response.message);
         }
+      });
+    } else {
+      setError('Sonraki soruya geçmek için yetkiniz yok veya oyun bulunamadı.');
+    }
+  };
+
+  const handleSubmitAnswer = (questionId, selectedOptionId) => {
+    if (!quiz || playerAnswered || currentQuestion?.questionId !== questionId) return; // Cevaplandıysa veya yanlış soruysa geri dön
+
+    const submittedTime = Date.now();
+    
+    // Cevaplama bayrağını önce set et ki aynı soruya birden fazla cevap gönderilmesin
+    setPlayerAnswered(true);
+
+    socket.emit('submitAnswer', {
+      gameCode,
+      questionId,
+      submittedOptionId: selectedOptionId,
+      submittedTime
+    }, (response) => {
+      if (response.status === 'success') {
+        setFeedback({ isCorrect: response.isCorrect, score: response.score, pointsEarned: response.pointsEarned, selectedOptionId }); // selectedOptionId de eklendi
+        // alert(`Cevabınız: ${response.isCorrect ? 'Doğru!' : 'Yanlış.'}. Puan: ${response.pointsEarned}. Toplam Skor: ${response.score}`);
+      } else {
+        setError(response.message);
+        alert(response.message);
+        setPlayerAnswered(false); // Hata olursa tekrar cevaplamaya izin ver
       }
     });
-    // Backend'den autoNextQuestion gelirse yeni soruya geç
-    socket.on('autoNextQuestion', () => {
-      socket.emit('nextQuestion', roomCode);
-      setWaitingOthers(false); // Yeni soru tetiklenince bekleme kalkar
-    });
-    // LobbyEnd event'i ile quiz başlatılır
-    socket.on('lobbyEnd', async () => {
-      // Oda kodu ile quiz bilgisini backend'den çek
-      const res = await getQuizByRoomCode(roomCode);
-      setQuiz(res.data);
-      setJoined(true);
-      setQuizEnd(false);
-      setTimeout(() => {
-        socket.emit('getQuestion', roomCode);
-      }, 300); // State güncellensin diye gecikme artırıldı
-    });
-    // Component unmount olduğunda eventler temizlenir
-    return () => {
-      socket.off('question');
-      socket.off('receiveAnswer');
-      socket.off('updateScores');
-      socket.off('quizEnd');
-      socket.off('autoNextQuestion');
-      socket.off('lobbyEnd');
-    };
-  }, [roomCode]);
-
-  // Odaya katılma fonksiyonu (artık sadece lobbyEnd sonrası kullanılacak)
-  const joinRoom = async () => {
-    if (roomCode && username) {
-      // Sadece lobbyEnd ile başlatılacak, burada getQuestion tetiklenmeyecek
-      setJoined(true);
-      setQuizEnd(false);
-      socket.emit('joinRoom', { roomCode, username });
-    } else {
-      alert('Oda kodu ve kullanıcı adı zorunludur!');
-    }
   };
 
-  // Lobby'den yönlendirme ile gelindiyse roomCode ve username state'ini al
-  useEffect(() => {
-    if (location.state && location.state.roomCode) {
-      setRoomCode(location.state.roomCode);
-    }
-    if (location.state && location.state.username) {
-      setUsername(location.state.username);
-    }
-  }, [location.state]);
-
-  // Cevap gönderme fonksiyonu
-  const sendAnswer = (selected) => {
-    if (roomCode && question) {
-      socket.emit('sendAnswer', {
-        roomCode,
-        answer: selected,
-        userId: userIdRef.current,
-        username // username'i de gönder
-      });
-      setAnswer(selected);
-      setShowTimer(false);
-      setWaitingOthers(true); // Cevap verince diğer oyuncuları bekle
-    }
-  };
-
-  // Soru süresi dolduğunda otomatik sonraki soruya geç
-  const handleTimeout = () => {
-    setShowTimer(false);
-    setTimeout(() => {
-      socket.emit('nextQuestion', roomCode);
-    }, 1000);
-  };
-  
-
-  // Odaya katılım yoksa katılım formunu göster
-  if (!joined) {
+  if (!gameCode) {
     return (
-      <div className="card" style={{ padding: 32 }}>
-        <h2>Canlı Quiz Odası</h2>
-        <input placeholder="Oda Kodu" value={roomCode} onChange={e => setRoomCode(e.target.value)} />
-        <input placeholder="Kullanıcı Adı" value={username} onChange={e => setUsername(e.target.value)} style={{ marginLeft: 8 }} />
-        <button onClick={joinRoom}>Odaya Katıl</button>
+      <div style={{ textAlign: 'center', padding: '50px', color: '#fff' }}>
+        {error ? <p style={{ color: 'red' }}>{error}</p> : <p>Oyun kodu yükleniyor...</p>}
       </div>
     );
   }
 
-  // Quiz bittiğinde skor tablosunu göster
-  if (quizEnd) {
+  if (error) {
     return (
-      <div className="card" style={{ padding: 32 }}>
-        <audio ref={audioRef} src={MUSIC_URL} autoPlay loop style={{ display: 'none' }} />
-        <h2>Quiz Bitti!</h2>
-        <Leaderboard roomId={roomCode} scores={scores} />
-        <div style={{ marginTop: 24 }}>
-          <button onClick={() => navigate('/')} style={{ marginRight: 12 }}>Ana Sayfa</button>
-          <button onClick={() => navigate('/profile')}>Profilim / Geçmişim</button>
-          <button style={{ marginLeft: 16 }} onClick={() => setMusicPlaying(p => !p)}>{musicPlaying ? 'Müziği Durdur' : 'Müziği Başlat'}</button>
-        </div>
+      <div style={{ textAlign: 'center', padding: '50px', color: 'red' }}>
+        <p>Hata: {error}</p>
+        <button onClick={() => navigate('/join-quiz')}>Tekrar Katıl</button>
       </div>
     );
   }
 
-  // Soru yükleniyorsa loading mesajı göster
-  if (!question) return <div style={{ padding: 32 }}>Soru yükleniyor...</div>;
+  if (!quiz) {
+    return (
+      <div style={{ textAlign: 'center', padding: '50px', color: '#fff' }}>
+        <p>Quiz bilgileri yükleniyor...</p>
+      </div>
+    );
+  }
 
-  // Quiz sırasında soru ve seçenekleri, zamanlayıcı ve skor tablosu göster
   return (
-    <div className="quiz-card" style={{ padding: 32 }}>
-      <audio ref={audioRef} src={MUSIC_URL} autoPlay loop style={{ display: 'none' }} />
-      <h2>{quiz?.title || 'Canlı Quiz'}</h2>
-      <button style={{ marginBottom: 12 }} onClick={() => setMusicPlaying(p => !p)}>{musicPlaying ? 'Müziği Durdur' : 'Müziği Başlat'}</button>
-      <div style={{ marginBottom: 16 }}>
-        <b>{question.text}</b>
-        <ul>
-          {question.options.map((opt, i) => (
-            <li key={i} style={{ marginBottom: 8 }}>
-              <button
-                disabled={!!answer}
-                onClick={() => sendAnswer(opt)}
-                style={{
-                  opacity: answer && answer !== opt ? 0.5 : 1,
-                  cursor: answer ? 'not-allowed' : 'pointer',
-                  background: answer === opt ? '#050505' : undefined
-                }}
-              >
-                {opt}
-              </button>
-            </li>
-          ))}
-        </ul>
-        {/* Soru için zamanlayıcı */}
-        {showTimer && <QuestionTimer duration={10} onTimeout={handleTimeout} />}
-        {/* Kullanıcı cevabı */}
-        {answer && <div className="success">Cevabınız: {answer}</div>}
-        {/* Diğer oyuncuları bekleme mesajı */}
-        {waitingOthers && <div style={{ color: '#888', marginTop: 12 }}>Diğer oyuncular bekleniyor...</div>}
-      </div>
-      {/* Skor tablosu */}
-      <Leaderboard roomId={roomCode} scores={scores} />
+    <div style={{
+      minHeight: 'calc(100vh - 80px)',
+      background: 'linear-gradient(120deg, #6a11cb 0%, #2575fc 100%)',
+      padding: '20px',
+      color: '#fff',
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+    }}>
+      <h1 style={{ marginBottom: 20 }}>{quiz.title}</h1>
+
+      {gameStatus === 'waiting' && (
+        <div style={{ textAlign: 'center', background: '#fff', color: '#333', borderRadius: 12, padding: 30, boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}>
+          <h2 style={{ color: '#6a11cb', marginBottom: 15 }}>Oyun Lobisi</h2>
+          <p style={{ fontSize: 24, fontWeight: 'bold', marginBottom: 20 }}>Oyun Kodu: {gameCode}</p>
+          <p style={{ marginBottom: 15 }}>Oyuncu Sayısı: {players.length}</p>
+          <div style={{ marginBottom: 20 }}>
+            <h3 style={{ marginBottom: 10 }}>Oyuncular:</h3>
+            <ul style={{ listStyleType: 'none', padding: 0 }}>
+              {players.map(p => (
+                <li key={p.socketId} style={{ background: '#e0e7ff', padding: 8, borderRadius: 8, marginBottom: 5, color: '#333' }}>
+                  {p.username} ({p.role === 'host' ? 'Host' : p.role}) - Skor: {p.score}
+                </li>
+              ))}
+            </ul>
+          </div>
+          {isHost && (
+            <button 
+              onClick={() => {
+                if (socket && gameCode && user) {
+                  socket.emit('startGame', gameCode, user.token, (response) => {
+                    if (response.status === 'error') {
+                      setError(response.message);
+                      alert(response.message);
+                    } else {
+                      alert('Oyun başarıyla başlatıldı!');
+                    }
+                  });
+                }
+              }}
+              style={{ background: '#1abc9c', color: '#fff', border: 'none', borderRadius: 10, padding: '12px 25px', fontSize: 18, fontWeight: 'bold', cursor: 'pointer' }}
+            >
+              Oyunu Başlat
+            </button>
+          )}
+        </div>
+      )}
+
+      {gameStatus === 'in_progress' && currentQuestion && !showLeaderboard && (
+        <div style={{ textAlign: 'center', background: '#fff', color: '#333', borderRadius: 12, padding: 30, boxShadow: '0 4px 20px rgba(0,0,0,0.1)', width: '100%', maxWidth: 700 }}>
+          <h3 style={{ marginBottom: 20, color: '#2575fc' }}>
+            Soru {quiz.questions.findIndex(q => q.questionId === currentQuestion.questionId) + 1} / {quiz.questions.length}
+          </h3>
+          <QuestionComponent 
+            question={currentQuestion}
+            onAnswer={handleSubmitAnswer}
+            playerAnswered={playerAnswered}
+            feedback={feedback}
+            timerRemaining={timerRemaining}
+          />
+          {isHost && (
+            <button 
+              onClick={handleNextQuestion} 
+              style={{ background: '#6a11cb', color: '#fff', border: 'none', borderRadius: 10, padding: '10px 20px', fontSize: 16, fontWeight: 'bold', marginTop: 20, cursor: 'pointer' }}
+            >
+              Sonraki Soruya Geç
+            </button>
+          )}
+        </div>
+      )}
+
+      {gameStatus === 'in_progress' && showLeaderboard && (
+        <div style={{ textAlign: 'center', background: '#fff', color: '#333', borderRadius: 12, padding: 30, boxShadow: '0 4px 20px rgba(0,0,0,0.1)', width: '100%', maxWidth: 500 }}>
+          <Leaderboard roomId={gameCode} scores={gameScores} />
+        </div>
+      )}
+
+      {gameStatus === 'completed' && (
+        <div style={{ textAlign: 'center', background: '#fff', color: '#333', borderRadius: 12, padding: 30, boxShadow: '0 4px 20px rgba(0,0,0,0.1)', width: '100%', maxWidth: 500 }}>
+          <h2 style={{ color: '#6a11cb', marginBottom: 20 }}>Oyun Bitti! Final Skorları</h2>
+          <Leaderboard roomId={gameCode} scores={gameScores} />
+          <button 
+            onClick={() => navigate('/')} 
+            style={{ background: '#1abc9c', color: '#fff', border: 'none', borderRadius: 10, padding: '12px 25px', fontSize: 18, fontWeight: 'bold', cursor: 'pointer', marginTop: 20 }}
+          >
+            Ana Sayfaya Dön
+          </button>
+        </div>
+      )}
     </div>
   );
 }
